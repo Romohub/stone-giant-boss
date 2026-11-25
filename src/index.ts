@@ -1,6 +1,16 @@
-// Stone Giant v2 — Game Over 2026 — aiming for 5 stars on all 7 criteria
-// Paste as src/index.ts in Creator Hub, replacing v1, then PLAY.
-// v2 adds, vs v1:
+// Stone Giant v3 — Game Over 2026 — v2 + audio
+// Paste as src/index.ts in Creator Hub, replacing v2, then PLAY.
+// v3 adds, vs v2:
+//  - Audio: hit sound on eye hit, roar when the eye opens in Phase 3,
+//    win fanfare on victory, game-over jingle on defeat.
+//    Sounds live in sounds/ (hit.mp3, roar.mp3, win.mp3, lose.mp3).
+//    If a sound file is missing, the game still runs — sounds are
+//    played through a safe helper that skips a missing component.
+//  - HUD text raised higher (title y 3.8, status y 4.6) so the default
+//    trees are less likely to hide it. NOTE: still delete the default
+//    red/yellow trees in the Creator Hub editor — they are not in
+//    this code, they came with the default scene.
+// Gameplay is unchanged from v2: HP 3, 5:00 timer, 3 hits to win.
 //  1. Boss Design: bigger giant, glowing lava cracks, big emissive eye,
 //     brow + jaw, taunts per phase, eye colour yellow -> orange -> red
 //  2. Boss Mechanics: rocks now TARGET the player and DAMAGE you
@@ -16,11 +26,13 @@
 
 import {
   engine,
+  Entity,
   Transform,
   MeshRenderer,
   MeshCollider,
   Material,
   TextShape,
+  AudioSource,
   pointerEventsSystem,
   InputAction
 } from '@dcl/sdk/ecs'
@@ -65,10 +77,10 @@ let lost = false
 let winTimer = 0
 let lastStatusSecond = -1
 
-type Rock = { entity: number; vy: number }
+type Rock = { entity: Entity; vy: number }
 const rocks: Rock[] = []
-const giantParts: number[] = []
-const borderWalls: number[] = []
+const giantParts: Entity[] = []
+const borderWalls: Entity[] = []
 
 function box(
   x: number,
@@ -116,12 +128,30 @@ function sphere(
   return e
 }
 
-function setEyeColor(color: Color4, eye: number) {
+function setEyeColor(color: Color4, eye: Entity) {
   Material.setPbrMaterial(eye, {
     albedoColor: color,
     emissiveColor: color,
     emissiveIntensity: eyeOpen ? 2 : 0.2
   })
+}
+
+// ---------- Sounds (v3) ----------
+// One entity per sound, placed at the arena centre so it is audible
+// anywhere in the 16x16 arena. If a sounds/*.mp3 file is missing,
+// Decentraland simply has nothing to play — the helper below uses
+// getMutableOrNull and never throws, so the game keeps running.
+function makeSound(url: string): Entity {
+  const e = engine.addEntity()
+  Transform.create(e, { position: Vector3.create(8, 3, 8) })
+  AudioSource.create(e, { audioClipUrl: url, playing: false, loop: false })
+  return e
+}
+
+function playSound(sound: Entity | undefined) {
+  if (sound === undefined) return
+  const src = AudioSource.getMutableOrNull(sound)
+  if (src) src.playing = true
 }
 
 function playerPos(): { x: number; z: number } {
@@ -192,8 +222,9 @@ export function main() {
   giantParts.push(eye)
 
   // ---------- Text: title, taunt, HUD ----------
+  // v3: title + status raised higher so the default trees hide them less
   const title = engine.addEntity()
-  Transform.create(title, { position: Vector3.create(8, 3.0, 5.5) })
+  Transform.create(title, { position: Vector3.create(8, 3.8, 5.5) })
   TextShape.create(title, {
     text: 'STONE GIANT\nWait for the eye to open — then CLICK it!',
     fontSize: 2,
@@ -209,7 +240,7 @@ export function main() {
   })
 
   const status = engine.addEntity()
-  Transform.create(status, { position: Vector3.create(8, 3.8, 6.5) })
+  Transform.create(status, { position: Vector3.create(8, 4.6, 6.5) })
   TextShape.create(status, {
     text: 'HP: 3/3  |  Hits: 0/3  |  Time: 5:00  |  Phase 1',
     fontSize: 2,
@@ -252,6 +283,12 @@ export function main() {
     fontSize: 2,
     textColor: Color4.White()
   })
+
+  // ---------- Sounds (v3) ----------
+  const hitSound = makeSound('sounds/hit.mp3')
+  const roarSound = makeSound('sounds/roar.mp3')
+  const winSound = makeSound('sounds/win.mp3')
+  const loseSound = makeSound('sounds/lose.mp3')
 
   function fmtTime(s: number) {
     const m = Math.floor(Math.max(0, s) / 60)
@@ -314,6 +351,7 @@ export function main() {
     lost = true
     eyeOpen = false
     setEyeColor(EYE_CLOSED, eye)
+    playSound(loseSound)
     Transform.getMutable(loseText).scale = Vector3.create(1, 1, 1)
     showAgainButton()
     updateStatus()
@@ -322,6 +360,7 @@ export function main() {
   function winGame() {
     won = true
     winTimer = 0
+    playSound(winSound)
     updateStatus()
     Transform.getMutable(victory).scale = Vector3.create(1, 1, 1)
     Transform.getMutable(title).scale = Vector3.create(0.01, 0.01, 0.01)
@@ -371,6 +410,7 @@ export function main() {
     () => {
       if (won || lost || !eyeOpen) return
       hits++
+      playSound(hitSound)
       setEyeColor(EYE_HIT, eye)
       if (hits >= HITS_TO_WIN) {
         winGame()
@@ -450,6 +490,7 @@ export function main() {
     if (shouldBeOpen !== eyeOpen) {
       eyeOpen = shouldBeOpen
       setEyeColor(eyeOpen ? EYE_COLORS[phase - 1] : EYE_CLOSED, eye)
+      if (eyeOpen && phase === 3) playSound(roarSound) // enrage roar
       updateStatus()
       if (!eyeOpen && phase >= 2) spawnRock(true)
     }
